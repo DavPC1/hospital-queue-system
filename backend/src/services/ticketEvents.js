@@ -1,14 +1,9 @@
 // backend/src/services/ticketEvents.js
-import { getConnection } from './db.js';
+import { getIO } from './socket.js';
 
-export async function logEvent(ticketId, type, meta = null) {
-  const pool = await getConnection();
-  await pool.request()
-    .input('ticketId', ticketId)
-    .input('type', type)
-    .input('meta', meta ? JSON.stringify(meta) : null)
-    .query(`
-      INSERT INTO ticket_events(ticket_id, type, meta) 
-      VALUES(@ticketId, @type, @meta)
-    `);
+export function emitQueueUpdate(clinic_id) {
+  try { getIO().emit('queue:update', { clinic_id }); } catch {}
+}
+export function emitMetricsUpdate() {
+  try { getIO().emit('metrics:update'); } catch {}
 }

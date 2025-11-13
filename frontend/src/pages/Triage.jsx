@@ -1,92 +1,65 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import Card from '../components/Card';
+import { connectSocket } from '../services/socket';
+import { toast } from 'react-toastify';
 
-export default function Triage() {
-  const [clinics, setClinics] = useState([]);
-  const [ticketId, setTicketId] = useState('');
+export default function Triage(){
   const [clinicId, setClinicId] = useState('');
-  const [priority, setPriority] = useState('2');
-  const [msg, setMsg] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [queue, setQueue] = useState([]);
+  const socket = connectSocket();
 
-  useEffect(() => {
-    api.get('/clinics').then(({ data }) => {
-      setClinics(data);
-      if (data.length) setClinicId(String(data[0].id));
-    });
-  }, []);
-
-  async function assign() {
-    if (!ticketId || !clinicId) {
-      setMsg({ type: 'err', text: 'Ticket y clínica son requeridos' });
-      return;
-    }
-    setLoading(true);
-    setMsg(null);
+  async function loadQueue(){
+    if (!clinicId) return;
     try {
-      await api.post(`/tickets/${ticketId}/triage`, {
-        clinic_id: Number(clinicId),
-        priority: Number(priority),
-      });
-      setMsg({ type: 'ok', text: `Ticket #${ticketId} asignado` });
-      setTicketId('');
-    } catch (e) {
-      setMsg({ type: 'err', text: 'No se pudo asignar. Verifica el ID.' });
-    } finally {
-      setLoading(false);
-    }
+      const { data } = await api.get(`/tickets/clinic/${clinicId}/queue`);
+      setQueue(data);
+    } catch(e){ console.error(e); }
+  }
+
+  useEffect(()=>{
+    socket.on('queue:update', (payload)=> {
+      if (!clinicId) return;
+      if (payload?.clinic_id?.toString() === clinicId.toString()) loadQueue();
+    });
+    return ()=> socket.off('queue:update');
+  }, [clinicId]);
+
+  async function assign(trkId, priority = 5){
+    try {
+      await api.post(`/tickets/${trkId}/triage`, { clinic_id: clinicId, priority });
+      toast.success('Paciente asignado al triaje');
+      loadQueue();
+    } catch (e){ toast.error('Error en asignación'); }
   }
 
   return (
-    <div className="max-w-xl mx-auto bg-white p-6 rounded-xl shadow">
-      <h2 className="text-xl font-semibold mb-4">Triaje</h2>
+    <div className="space-y-4">
+      <Card title="Triaje">
+        <div className="flex items-center gap-2">
+          <input placeholder="Clínica id" value={clinicId} onChange={e=>setClinicId(e.target.value)} className="border rounded px-3 py-2 w-40" />
+          <button onClick={loadQueue} className="bg-sky-600 text-white px-3 py-2 rounded">Cargar</button>
+        </div>
+      </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <input
-          value={ticketId}
-          onChange={e => setTicketId(e.target.value.replace(/\D/g, ''))}
-          placeholder="ID de ticket"
-          className="border rounded p-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-        />
-        <select
-          value={clinicId}
-          onChange={e => setClinicId(e.target.value)}
-          className="border rounded p-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-        >
-          {clinics.map(c => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <select
-          value={priority}
-          onChange={e => setPriority(e.target.value)}
-          className="border rounded p-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-        >
-          <option value="1">Prioridad alta</option>
-          <option value="2">Prioridad media</option>
-          <option value="3">Prioridad baja</option>
-        </select>
-      </div>
-
-      <button
-        onClick={assign}
-        disabled={loading}
-        className="mt-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-4 py-2 rounded"
-      >
-        {loading ? 'Asignando...' : 'Asignar a clínica'}
-      </button>
-
-      {msg && (
-        <p
-          className={`mt-4 text-sm ${
-            msg.type === 'ok' ? 'text-green-700' : 'text-red-600'
-          }`}
-        >
-          {msg.text}
-        </p>
-      )}
+      <Card title="Cola (Triaged / Pending)">
+        {queue.length === 0 ? <div className="text-slate-500">No hay pacientes</div> : (
+          <ul className="space-y-2">
+            {queue.map(q => (
+              <li key={q.id} className="p-2 border rounded flex justify-between items-center">
+                <div>
+                  <div className="font-medium">{q.patient_name}</div>
+                  <div className="text-xs text-slate-500">#{q.id} • {q.document}</div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={()=>assign(q.id, 1)} className="px-3 py-1 bg-green-600 text-white rounded">Alta</button>
+                  <button onClick={()=>assign(q.id, 5)} className="px-3 py-1 bg-amber-500 text-white rounded">Normal</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
     </div>
   );
 }

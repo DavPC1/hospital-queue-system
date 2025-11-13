@@ -1,189 +1,164 @@
 // backend/src/controllers/tickets.controller.js
 import { getConnection } from '../services/db.js';
-import { logEvent } from '../services/ticketEvents.js';
+import { emitQueueUpdate, emitMetricsUpdate } from '../services/ticketEvents.js';
 
-/**
- * Recepción crea ticket.
- * Body:
- *  - patient_id (opcional)
- *  - patient { name, document?, phone? } (opcional: si no viene patient_id)
- */
-export async function createTicket(req, res) {
-  const pool = await getConnection();
-  const { patient_id, patient } = req.body;
-
+export async function create(req, res) {
   try {
-    let pid = patient_id;
+    const pool = await getConnection();
+    const body = req.body || {};
 
-    // si no envían patient_id, crear paciente rápido
-    if (!pid && patient?.name) {
-      const p = await pool.request()
-        .input('name', patient.name)
-        .input('document', patient.document || null)
-        .input('phone', patient.phone || null)
+    let patientId = body.patient_id;
+    if (!patientId && body.patient) {
+      const { name, document, phone } = body.patient;
+      const ins = await pool.request()
+        .input('name', name)
+        .input('document', document)
+        .input('phone', phone)
         .query(`
-          INSERT INTO patients(name, document, phone)
+          INSERT INTO patients (name, document, phone)
           OUTPUT INSERTED.id
-          VALUES(@name, @document, @phone)
+          VALUES (@name, @document, @phone)
         `);
-      pid = p.recordset[0].id;
+      patientId = ins.recordset[0].id;
     }
 
-    if (!pid) return res.status(400).json({ error: 'patient_id o patient.name requerido' });
+    if (!patientId) return res.status(400).json({ error: 'patient_id o patient es requerido' });
 
-    const ins = await pool.request()
-      .input('patient_id', pid)
+    const r = await pool.request()
+      .input('patient_id', patientId)
       .query(`
-        INSERT INTO tickets(patient_id, status)
+        INSERT INTO tickets (patient_id, status, created_at)
         OUTPUT INSERTED.id, INSERTED.patient_id, INSERTED.status, INSERTED.created_at
-        VALUES(@patient_id, 'pending')
+        VALUES (@patient_id, 'pending', SYSDATETIME())
       `);
+    const ticket = r.recordset[0];
 
-    const ticket = ins.recordset[0];
-    await logEvent(ticket.id, 'create', { patient_id: pid });
-    return res.status(201).json(ticket);
+    emitMetricsUpdate();
+    res.status(201).json(ticket);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Error creando ticket' });
   }
 }
 
-/**
- * Triaje asigna clínica y prioridad (1 alta, 2 media, 3 baja)
- * Body: { clinic_id, priority }
- */
-export async function triageTicket(req, res) {
-  const { id } = req.params;
-  const { clinic_id, priority } = req.body;
-  if (!clinic_id || !priority) return res.status(400).json({ error: 'clinic_id y priority son requeridos' });
-
+export async function triage(req, res) {
   try {
+    const id = parseInt(req.params.id, 10);
+    const { clinic_id, priority = 5 } = req.body;
+    if (!clinic_id) return res.status(400).json({ error: 'clinic_id requerido' });
+
     const pool = await getConnection();
-    const upd = await pool.request()
+    await pool.request()
       .input('id', id)
       .input('clinic_id', clinic_id)
       .input('priority', priority)
       .query(`
         UPDATE tickets
-        SET clinic_id = @clinic_id,
-            priority  = @priority,
-            status    = 'triaged',
-            triaged_at = SYSDATETIME()
-        OUTPUT INSERTED.id, INSERTED.clinic_id, INSERTED.priority, INSERTED.status, INSERTED.triaged_at
-        WHERE id = @id;
+        SET clinic_id = @clinic_id, priority = @priority, status = 'triaged', triaged_at = SYSDATETIME()
+        WHERE id = @id
       `);
 
-    if (!upd.recordset.length) return res.status(404).json({ error: 'ticket no encontrado' });
-
-    await logEvent(+id, 'triage', { clinic_id, priority });
-    return res.json(upd.recordset[0]);
+    emitQueueUpdate(clinic_id);
+    emitMetricsUpdate();
+    res.json({ ok: true });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Error en triaje' });
   }
 }
 
-/**
- * Pantalla/doctor: obtener cola por clínica.
- * Orden: prioridad asc, triaged_at asc.
- */
-export async function getClinicQueue(req, res) {
-  const { id } = req.params; // clinic_id
+export async function nextInClinic(req, res) {
   try {
+    const clinic_id = parseInt(req.params.id, 10);
     const pool = await getConnection();
-    const result = await pool.request()
-      .input('clinic_id', id)
+
+    const q = await pool.request()
+      .input('clinic_id', clinic_id)
       .query(`
-        SELECT t.id, t.patient_id, p.name as patient_name, t.priority, t.status, t.triaged_at, t.called_at
+        SELECT TOP 1 t.*
         FROM tickets t
-        JOIN patients p ON p.id = t.patient_id
-        WHERE t.clinic_id = @clinic_id
-          AND t.status IN ('triaged','in_service')
-        ORDER BY t.priority ASC, t.triaged_at ASC
+        WHERE t.clinic_id = @clinic_id AND t.status IN ('triaged','pending')
+        ORDER BY COALESCE(t.priority,99) ASC, t.created_at ASC
       `);
-    res.json(result.recordset);
+
+    if (!q.recordset.length) return res.status(204).send();
+
+    const ticket = q.recordset[0];
+
+    await pool.request()
+      .input('id', ticket.id)
+      .query(`UPDATE tickets SET status='in_service', started_at=SYSDATETIME() WHERE id=@id`);
+
+    emitQueueUpdate(clinic_id);
+    emitMetricsUpdate();
+    res.json(ticket);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener siguiente' });
   }
 }
 
-/**
- * Doctor: llamar siguiente en clínica.
- * Toma el primer triaged y lo pasa a in_service.
- */
-export async function callNext(req, res) {
-  const { id } = req.params; // clinic_id
+export async function finish(req, res) {
   try {
+    const id = parseInt(req.params.id, 10);
     const pool = await getConnection();
 
-    // uno en servicio por clínica: opcionalmente podrías cerrar el anterior
-    const next = await pool.request()
-      .input('clinic_id', id)
+    const info = await pool.request().input('id', id).query('SELECT clinic_id FROM tickets WHERE id=@id');
+    const clinic_id = info.recordset[0]?.clinic_id;
+
+    await pool.request().input('id', id)
+      .query(`UPDATE tickets SET status='finished', finished_at=SYSDATETIME() WHERE id=@id`);
+
+    if (clinic_id) {
+      emitQueueUpdate(clinic_id);
+      emitMetricsUpdate();
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al finalizar' });
+  }
+}
+
+export async function noShow(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const pool = await getConnection();
+
+    const info = await pool.request().input('id', id).query('SELECT clinic_id FROM tickets WHERE id=@id');
+    const clinic_id = info.recordset[0]?.clinic_id;
+
+    await pool.request().input('id', id)
+      .query(`UPDATE tickets SET status='no_show', finished_at=SYSDATETIME() WHERE id=@id`);
+
+    if (clinic_id) {
+      emitQueueUpdate(clinic_id);
+      emitMetricsUpdate();
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error al marcar ausencia' });
+  }
+}
+
+export async function queueByClinic(req, res) {
+  try {
+    const clinic_id = parseInt(req.params.id, 10);
+    const pool = await getConnection();
+    const q = await pool.request()
+      .input('clinic_id', clinic_id)
       .query(`
-        SELECT TOP 1 t.id
+        SELECT t.id, t.patient_id, t.status, t.priority, t.created_at,
+               p.name AS patient_name, p.document
         FROM tickets t
-        WHERE t.clinic_id = @clinic_id AND t.status = 'triaged'
-        ORDER BY t.priority ASC, t.triaged_at ASC
+        LEFT JOIN patients p ON p.id = t.patient_id
+        WHERE t.clinic_id = @clinic_id AND t.status IN ('triaged','pending','in_service')
+        ORDER BY COALESCE(t.priority,99) ASC, t.created_at ASC
       `);
-
-    if (!next.recordset.length) return res.status(204).send(); // no hay siguiente
-
-    const ticketId = next.recordset[0].id;
-
-    const upd = await pool.request()
-      .input('id', ticketId)
-      .query(`
-        UPDATE tickets
-        SET status = 'in_service', called_at = SYSDATETIME()
-        OUTPUT INSERTED.id, INSERTED.status, INSERTED.called_at
-        WHERE id = @id
-      `);
-
-    await logEvent(ticketId, 'call', null);
-    res.json(upd.recordset[0]);
+    res.json(q.recordset);
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-}
-
-/** Doctor: finalizar consulta */
-export async function finishTicket(req, res) {
-  const { id } = req.params;
-  try {
-    const pool = await getConnection();
-    const upd = await pool.request()
-      .input('id', id)
-      .query(`
-        UPDATE tickets
-        SET status = 'done', finished_at = SYSDATETIME()
-        OUTPUT INSERTED.id, INSERTED.status, INSERTED.finished_at
-        WHERE id = @id
-      `);
-
-    if (!upd.recordset.length) return res.status(404).json({ error: 'ticket no encontrado' });
-    await logEvent(+id, 'finish', null);
-    res.json(upd.recordset[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-}
-
-/** Doctor: marcar ausente */
-export async function noShowTicket(req, res) {
-  const { id } = req.params;
-  try {
-    const pool = await getConnection();
-    const upd = await pool.request()
-      .input('id', id)
-      .query(`
-        UPDATE tickets
-        SET status = 'no_show'
-        OUTPUT INSERTED.id, INSERTED.status
-        WHERE id = @id
-      `);
-
-    if (!upd.recordset.length) return res.status(404).json({ error: 'ticket no encontrado' });
-    await logEvent(+id, 'no_show', null);
-    res.json(upd.recordset[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Error al obtener cola' });
   }
 }

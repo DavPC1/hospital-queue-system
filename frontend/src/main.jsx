@@ -9,7 +9,15 @@ import Triage from './pages/Triage.jsx';
 import Doctor from './pages/Doctor.jsx';
 import Display from './pages/Display.jsx';
 import Login from './pages/Login.jsx';
+import App from './App.jsx'
 import './index.css';
+import 'react-toastify/dist/ReactToastify.css';
+import { ToastContainer } from 'react-toastify';
+
+<ToastContainer position="top-right" />
+
+
+
 
 const Start = () => {
   const token = localStorage.getItem('token');
@@ -18,6 +26,7 @@ const Start = () => {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
+     <App />
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />

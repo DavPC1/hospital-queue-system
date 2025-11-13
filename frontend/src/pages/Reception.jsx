@@ -1,72 +1,78 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import api from '../api/client';
+import Card from '../components/Card';
+import Spinner from '../components/Spinner';
+import { toast } from 'react-toastify';
+import { connectSocket } from '../services/socket';
 
-export default function Reception() {
-  const [form, setForm] = useState({ name: '', document: '', phone: '' });
-  const [msg, setMsg] = useState(null);
-  const [loading, setLoading] = useState(false);
+export default function Reception(){
+  const [name,setName]=useState('');
+  const [doc,setDoc]=useState('');
+  const [phone,setPhone]=useState('');
+  const [recent,setRecent]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const socket = connectSocket();
 
-  const handleChange = e => setForm({ ...form, [e.target.name]: e.target.value });
-
-  const handleSubmit = async e => {
-    e.preventDefault();
+  async function loadRecent(){
     setLoading(true);
-    setMsg(null);
     try {
-      const { data } = await api.post('/tickets', { patient: form });
-      setMsg({ type: 'ok', text: `Ticket creado #${data.id} para ${form.name}` });
-      setForm({ name: '', document: '', phone: '' });
-    } catch (err) {
-      setMsg({ type: 'err', text: 'Error al crear ticket' });
-    } finally {
-      setLoading(false);
+      const { data } = await api.get('/tickets?limit=8');
+      setRecent(data);
+    } catch(e){
+      console.error(e);
+    } finally { setLoading(false); }
+  }
+
+  useEffect(()=>{
+    loadRecent();
+    socket.on('queue:update', loadRecent);
+    return ()=> socket.off('queue:update', loadRecent);
+  },[]);
+
+  async function submit(e){
+    e.preventDefault();
+    try {
+      const body = { patient: { name, document: doc, phone } };
+      const res = await api.post('/tickets', body);
+      toast.success(`Ticket #${res.data.id} creado`);
+      setName(''); setDoc(''); setPhone('');
+      loadRecent();
+    } catch(err){
+      toast.error(err?.response?.data?.error || 'Error creando ticket');
     }
-  };
+  }
 
   return (
-    <div className="max-w-xl mx-auto bg-white p-6 rounded-xl shadow">
-      <h2 className="text-xl font-semibold mb-4">Recepción</h2>
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <input
-          name="name"
-          value={form.name}
-          onChange={handleChange}
-          placeholder="Nombre del paciente"
-          className="border rounded w-full p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          required
-        />
-        <input
-          name="document"
-          value={form.document}
-          onChange={handleChange}
-          placeholder="Documento"
-          className="border rounded w-full p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <input
-          name="phone"
-          value={form.phone}
-          onChange={handleChange}
-          placeholder="Teléfono"
-          className="border rounded w-full p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-        />
-        <button
-          type="submit"
-          disabled={loading}
-          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white px-4 py-2 rounded"
-        >
-          {loading ? 'Creando...' : 'Crear Ticket'}
-        </button>
-      </form>
+    <div className="grid md:grid-cols-3 gap-6">
+      <div className="md:col-span-1">
+        <Card title="Recepción - Crear ticket">
+          <form onSubmit={submit} className="space-y-3">
+            <input value={name} onChange={e=>setName(e.target.value)} placeholder="Nombre" className="w-full border rounded px-3 py-2" required />
+            <input value={doc} onChange={e=>setDoc(e.target.value)} placeholder="Documento" className="w-full border rounded px-3 py-2" />
+            <input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="Teléfono" className="w-full border rounded px-3 py-2" />
+            <button className="bg-sky-600 text-white px-4 py-2 rounded hover:bg-sky-700">Crear ticket</button>
+          </form>
+        </Card>
+      </div>
 
-      {msg && (
-        <p
-          className={`mt-4 text-sm ${
-            msg.type === 'ok' ? 'text-green-700' : 'text-red-600'
-          }`}
-        >
-          {msg.text}
-        </p>
-      )}
+      <div className="md:col-span-2">
+        <Card title="Últimos tickets">
+          {loading ? <div className="flex items-center gap-2"><Spinner/>Cargando...</div> : (
+            <ul className="space-y-2">
+              {recent.length === 0 && <div className="text-sm text-slate-500">Sin tickets recientes</div>}
+              {recent.map(t => (
+                <li key={t.id} className="flex justify-between items-center p-2 border rounded">
+                  <div>
+                    <div className="font-medium">{t.patient_name}</div>
+                    <div className="text-xs text-slate-500">#{t.id} — {t.document || '—'}</div>
+                  </div>
+                  <div className="text-sm text-slate-700">{t.status}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </div>
     </div>
   );
 }

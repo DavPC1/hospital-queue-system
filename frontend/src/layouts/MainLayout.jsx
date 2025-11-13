@@ -1,41 +1,72 @@
-import { Link, Outlet, useLocation } from "react-router-dom";
+// frontend/src/layouts/MainLayout.jsx
+import React, { useEffect, useState } from 'react';
+import { Outlet, Link, useNavigate } from 'react-router-dom';
+import { getSocket, disconnectSocket } from '../services/socket';
 
-const NavLink = ({ to, children }) => {
-  const loc = useLocation();
-  const active = loc.pathname === to || (to === "/dashboard" && loc.pathname === "/");
-  return (
-    <Link
-      to={to}
-      className={`px-4 py-2 rounded transition ${
-        active ? "bg-white text-blue-700" : "bg-blue-700 text-white hover:bg-blue-600"
-      }`}
-    >
-      {children}
-    </Link>
-  );
-};
+function getUserFromStorage() {
+  try {
+    return JSON.parse(localStorage.getItem('user') || 'null');
+  } catch {
+    return null;
+  }
+}
 
 export default function MainLayout() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState(getUserFromStorage());
+
+  useEffect(() => {
+    const s = getSocket(); // asegurar conexión si la hay
+    return () => {
+      // opcional: desconectar al desmontar layout
+      // if (s) s.disconnect();
+    };
+  }, []);
+
+  function logout() {
+    const s = getSocket();
+    if (s) s.disconnect();
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    navigate('/login', { replace: true });
+  }
+
   return (
-    <div className="min-h-screen bg-gray-100 text-gray-900 flex flex-col">
-      <header className="bg-blue-800 text-white py-4 shadow">
-        <div className="max-w-6xl mx-auto px-4 flex items-center justify-between">
-          <h1 className="text-xl font-semibold">Sistema de Turnos Hospitalarios</h1>
-          <nav className="flex gap-2">
-            <NavLink to="/dashboard">Dashboard</NavLink>
-            <NavLink to="/reception">Recepción</NavLink>
-            <NavLink to="/triage">Triaje</NavLink>
-            <NavLink to="/doctor">Médico</NavLink>
-            <NavLink to="/display">Pantalla</NavLink>
-          </nav>
+    <div className="min-h-screen bg-slate-50">
+      <header className="bg-white shadow-sm sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <Link to="/dashboard" className="text-lg font-semibold text-slate-800">HospitalQueue</Link>
+            <nav className="hidden lg:flex gap-3 text-sm">
+              <Link to="/reception" className="px-3 py-2 rounded hover:bg-slate-100">Recepción</Link>
+              <Link to="/triage" className="px-3 py-2 rounded hover:bg-slate-100">Triaje</Link>
+              <Link to="/doctor" className="px-3 py-2 rounded hover:bg-slate-100">Médico</Link>
+              <Link to="/display" className="px-3 py-2 rounded hover:bg-slate-100">Pantalla</Link>
+              <Link to="/users" className="px-3 py-2 rounded hover:bg-slate-100">Usuarios</Link>
+            </nav>
+          </div>
+
+          <div className="flex items-center gap-4">
+            {user ? (
+              <>
+                <div className="text-sm text-slate-600">Hola, <strong className="text-slate-800">{user.username}</strong></div>
+                <button
+                  onClick={logout}
+                  className="bg-rose-500 hover:bg-rose-600 text-white text-sm px-3 py-1 rounded"
+                >
+                  Cerrar sesión
+                </button>
+              </>
+            ) : (
+              <Link to="/login" className="text-sm text-slate-600">Iniciar sesión</Link>
+            )}
+          </div>
         </div>
       </header>
-      <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-6">
+
+      <main className="max-w-7xl mx-auto px-4 py-6">
         <Outlet />
       </main>
-      <footer className="bg-gray-900 text-white text-center py-2 text-sm">
-        © 2025 Hospital Queue System
-      </footer>
     </div>
   );
 }
