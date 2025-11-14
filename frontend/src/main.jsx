@@ -18,6 +18,8 @@ import { ToastContainer } from 'react-toastify';
 
 
 
+import { connectSocket } from './services/socket';
+connectSocket();
 
 const Start = () => {
   const token = localStorage.getItem('token');

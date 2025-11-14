@@ -1,0 +1,10 @@
+# Dependencias
+/node_modules
+
+# Archivos de entorno (Contraseñas!)
+.env
+.env.*
+
+# Logs
+/logs
+*.log

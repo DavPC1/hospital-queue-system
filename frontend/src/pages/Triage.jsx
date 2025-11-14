@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import api from '../api/client';
 import Card from '../components/Card';
 import { connectSocket } from '../services/socket';
@@ -7,7 +7,7 @@ import { toast } from 'react-toastify';
 export default function Triage(){
   const [clinicId, setClinicId] = useState('');
   const [queue, setQueue] = useState([]);
-  const socket = connectSocket();
+  const socketRef = useRef(null);
 
   async function loadQueue(){
     if (!clinicId) return;
@@ -17,33 +17,53 @@ export default function Triage(){
     } catch(e){ console.error(e); }
   }
 
-  useEffect(()=>{
+  useEffect(() => {
+    if (!socketRef.current) socketRef.current = connectSocket();
+    const socket = socketRef.current;
+
     socket.on('queue:update', (payload)=> {
-      if (!clinicId) return;
-      if (payload?.clinic_id?.toString() === clinicId.toString()) loadQueue();
+      if (payload?.clinic_id?.toString() === clinicId.toString()) {
+        loadQueue();
+      }
     });
-    return ()=> socket.off('queue:update');
+
+    return () => socket.off('queue:update');
   }, [clinicId]);
 
   async function assign(trkId, priority = 5){
     try {
-      await api.post(`/tickets/${trkId}/triage`, { clinic_id: clinicId, priority });
+      await api.post(`/tickets/${trkId}/triage`, {
+        clinic_id: clinicId,
+        priority
+      });
       toast.success('Paciente asignado al triaje');
       loadQueue();
-    } catch (e){ toast.error('Error en asignación'); }
+    } catch (e){
+      console.error(e);
+      toast.error('Error en asignación');
+    }
   }
 
   return (
     <div className="space-y-4">
       <Card title="Triaje">
         <div className="flex items-center gap-2">
-          <input placeholder="Clínica id" value={clinicId} onChange={e=>setClinicId(e.target.value)} className="border rounded px-3 py-2 w-40" />
-          <button onClick={loadQueue} className="bg-sky-600 text-white px-3 py-2 rounded">Cargar</button>
+          <input
+            placeholder="Clínica id"
+            value={clinicId}
+            onChange={e => setClinicId(e.target.value)}
+            className="border rounded px-3 py-2 w-40"
+          />
+          <button onClick={loadQueue} className="bg-sky-600 text-white px-3 py-2 rounded">
+            Cargar
+          </button>
         </div>
       </Card>
 
       <Card title="Cola (Triaged / Pending)">
-        {queue.length === 0 ? <div className="text-slate-500">No hay pacientes</div> : (
+        {queue.length === 0 ? (
+          <div className="text-slate-500">No hay pacientes</div>
+        ) : (
           <ul className="space-y-2">
             {queue.map(q => (
               <li key={q.id} className="p-2 border rounded flex justify-between items-center">
@@ -52,8 +72,12 @@ export default function Triage(){
                   <div className="text-xs text-slate-500">#{q.id} • {q.document}</div>
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={()=>assign(q.id, 1)} className="px-3 py-1 bg-green-600 text-white rounded">Alta</button>
-                  <button onClick={()=>assign(q.id, 5)} className="px-3 py-1 bg-amber-500 text-white rounded">Normal</button>
+                  <button onClick={() => assign(q.id, 1)} className="px-3 py-1 bg-green-600 text-white rounded">
+                    Alta
+                  </button>
+                  <button onClick={() => assign(q.id, 5)} className="px-3 py-1 bg-amber-500 text-white rounded">
+                    Normal
+                  </button>
                 </div>
               </li>
             ))}

@@ -5,16 +5,14 @@ let socket = null;
 
 export function connectSocket() {
   if (socket) return socket;
+
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
   const origin = apiUrl.replace(/\/api\/?$/, '') || 'http://localhost:4000';
-  socket = clientIO(origin, { transports: ['websocket'] });
 
-  socket.on('connect', () => {
-    // opcional: console.log('socket connected', socket.id);
-  });
-
-  socket.on('disconnect', () => {
-    // opcional: console.log('socket disconnected');
+  socket = clientIO(origin, {
+    transports: ['websocket', 'polling'],  // 🔥 Render necesita esto
+    reconnection: true,
+    reconnectionDelay: 500,
   });
 
   return socket;

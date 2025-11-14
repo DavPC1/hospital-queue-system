@@ -25,13 +25,19 @@ import { errorHandler } from './middlewares/errors.js';
 import { initSocket } from './services/socket.js';
 import { getConnection } from './services/db.js';
 
-import { getIO } from './services/socket.js';
-
+import usersRouter from './routes/users.routes.js';
 
 const app = express();
 
 /* ===== Middlewares base ===== */
-app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') || '*' }));
+app.use(cors({
+  origin: [
+    'http://localhost:5173',   // Frontend dev
+    'http://localhost:4000'    // Para pruebas locales
+  ],
+  credentials: true
+}));
+
 app.use(helmet());
 app.use(compression());
 app.use(express.json());
@@ -48,19 +54,24 @@ app.get('/api/health', (_, res) => res.json({ status: 'ok', message: 'Servidor a
 /* ===== Rutas públicas ===== */
 app.use('/api/auth', authRouter);
 app.use('/api/clinics', clinicsRouter);
-// puedes dejar métricas públicas o protegerlas si quieres
 app.use('/api/metrics', metricsRouter);
 
 /* ===== Rutas protegidas ===== */
+app.use('/api/users', requireAuth, usersRouter);
 app.use('/api/patients', requireAuth, patientsRouter);
 app.use('/api/tickets', requireAuth, ticketsRouter);
 
-/* ===== Manejo de errores al final ===== */
+/* ===== Manejo de errores ===== */
 app.use(errorHandler);
 
 /* ===== HTTP + Socket.IO ===== */
 const server = http.createServer(app);
-initSocket(server, process.env.CORS_ORIGIN?.split(',') || '*');
+
+// 🔥 CONFIGURACIÓN CORRECTA DE SOCKET.IO PARA LOCAL
+initSocket(server, [
+  'http://localhost:5173',
+  'http://localhost:4000'
+]);
 
 /* ===== Inicio ===== */
 const PORT = process.env.PORT || 4000;
@@ -68,7 +79,7 @@ server.listen(PORT, () => {
   console.log(`API escuchando en http://localhost:${PORT}`);
 });
 
-/* ===== Test de conexión DB (no bloqueante) ===== */
+/* ===== Test de conexión DB ===== */
 getConnection().catch((e) => {
   console.error('⚠️  DB no conectó al inicio:', e.message);
 });
