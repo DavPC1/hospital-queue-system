@@ -29,12 +29,26 @@ import usersRouter from './routes/users.routes.js';
 
 const app = express();
 
+// ======================================================
+// 👇 LÓGICA DE ORÍGENES CORREGIDA 👇
+// ======================================================
+const allowedOrigins = [
+  'http://localhost:5173',   // Frontend dev
+  'http://localhost:4000'    // Para pruebas locales
+];
+
+// Si definimos un origen en producción (Render), lo agregamos a la lista
+if (process.env.CORS_ORIGIN) {
+  allowedOrigins.push(process.env.CORS_ORIGIN);
+}
+// ======================================================
+// 👆 FIN DE LA CORRECCIÓN 👆
+// ======================================================
+
+
 /* ===== Middlewares base ===== */
 app.use(cors({
-  origin: [
-    'http://localhost:5173',   // Frontend dev
-    'http://localhost:4000'    // Para pruebas locales
-  ],
+  origin: allowedOrigins, // <-- Usa la lista dinámica
   credentials: true
 }));
 
@@ -67,11 +81,8 @@ app.use(errorHandler);
 /* ===== HTTP + Socket.IO ===== */
 const server = http.createServer(app);
 
-// 🔥 CONFIGURACIÓN CORRECTA DE SOCKET.IO PARA LOCAL
-initSocket(server, [
-  'http://localhost:5173',
-  'http://localhost:4000'
-]);
+// 🔥 CONFIGURACIÓN CORRECTA DE SOCKET.IO
+initSocket(server, allowedOrigins); // <-- Usa la misma lista dinámica
 
 /* ===== Inicio ===== */
 const PORT = process.env.PORT || 4000;
