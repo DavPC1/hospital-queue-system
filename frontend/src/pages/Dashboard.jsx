@@ -1,72 +1,84 @@
-import { useEffect, useState } from "react";
-import api from "../api/client";
-import StatCard from "../components/StatCard";
+// frontend/src/pages/Dashboard.jsx
+import { useEffect, useState } from 'react';
+import api from '../api/client';
+import { connectSocket } from '../services/socket';
+import { useNavigate } from 'react-router-dom';
+import Card from '../components/Card';
+import Spinner from '../components/Spinner';
 
 export default function Dashboard() {
-  const [data, setData] = useState({ totals: {}, clinics: [] });
+  const [metrics, setMetrics] = useState({
+    totalWaiting: 0,
+    inService: 0,
+    totalToday: 0
+  });
   const [loading, setLoading] = useState(true);
+  const socket = connectSocket();
+  const navigate = useNavigate();
 
-  async function load() {
+  async function loadMetrics() {
+    setLoading(true);
     try {
-      const { data } = await api.get("/metrics");
-      setData(data);
+      const { data } = await api.get('/metrics');
+      // espera { totalWaiting, inService, totalTickets } o ajusta
+      setMetrics({
+        totalWaiting: data.totalWaiting ?? data.waiting ?? 0,
+        inService: data.inService ?? data.in_service ?? 0,
+        totalToday: data.totalTickets ?? data.total_today ?? 0,
+      });
+    } catch (e) {
+      console.error('Error cargando métricas', e);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    load();
-    const i = setInterval(load, 5000);
-    return () => clearInterval(i);
+    loadMetrics();
+    socket.on('metrics:update', loadMetrics);
+    return () => socket.off('metrics:update', loadMetrics);
   }, []);
 
-  const t = data.totals || {};
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Dashboard</h2>
-
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-        <StatCard title="Tickets hoy" value={t.tickets_today ?? 0} color="indigo" />
-        <StatCard title="Pendientes" value={t.pending ?? 0} color="gray" />
-        <StatCard title="Triaje" value={t.triaged ?? 0} color="yellow" />
-        <StatCard title="En consulta" value={t.in_service ?? 0} color="blue" />
-        <StatCard title="Atendidos" value={t.done ?? 0} color="green" />
-        <StatCard title="Ausentes" value={t.no_show ?? 0} color="red" />
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Resumen</h1>
+        <div className="flex gap-2">
+          <button onClick={() => navigate('/reception')} className="bg-white border px-3 py-2 rounded shadow-sm">Recepción</button>
+          <button onClick={() => navigate('/triage')} className="bg-white border px-3 py-2 rounded shadow-sm">Triaje</button>
+          <button onClick={() => navigate('/doctor')} className="bg-white border px-3 py-2 rounded shadow-sm">Médico</button>
+        </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow border">
-        <div className="px-4 py-3 border-b">
-          <h3 className="font-semibold">Estado por clínica</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-left">
-              <tr>
-                <th className="px-4 py-2">Clínica</th>
-                <th className="px-4 py-2">En cola</th>
-                <th className="px-4 py-2">En consulta</th>
-                <th className="px-4 py-2">Atendidos hoy</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr><td className="px-4 py-3" colSpan={4}>Cargando...</td></tr>
-              ) : data.clinics.length === 0 ? (
-                <tr><td className="px-4 py-3" colSpan={4}>Sin clínicas</td></tr>
-              ) : (
-                data.clinics.map(c => (
-                  <tr key={c.id} className="border-t">
-                    <td className="px-4 py-3 font-medium">{c.name}</td>
-                    <td className="px-4 py-3">{c.in_queue}</td>
-                    <td className="px-4 py-3">{c.being_seen}</td>
-                    <td className="px-4 py-3">{c.done_today}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card>
+          <div className="text-sm text-slate-500">En espera</div>
+          <div className="text-4xl font-bold">{loading ? <Spinner/> : metrics.totalWaiting}</div>
+        </Card>
+
+        <Card>
+          <div className="text-sm text-slate-500">En atención</div>
+          <div className="text-4xl font-bold">{loading ? <Spinner/> : metrics.inService}</div>
+        </Card>
+
+        <Card>
+          <div className="text-sm text-slate-500">Total hoy</div>
+          <div className="text-4xl font-bold">{loading ? <Spinner/> : metrics.totalToday}</div>
+        </Card>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <Card title="Acciones rápidas">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button onClick={() => navigate('/reception')} className="bg-sky-600 text-white px-4 py-2 rounded">Abrir Recepción</button>
+            <button onClick={() => navigate('/triage')} className="bg-amber-500 text-white px-4 py-2 rounded">Abrir Triaje</button>
+            <button onClick={() => navigate('/doctor')} className="bg-green-600 text-white px-4 py-2 rounded">Abrir Médico</button>
+          </div>
+        </Card>
+
+        <Card title="Atajos">
+          <div className="text-sm text-slate-600">Usa estos atajos para navegar rápido entre módulos. La pantalla pública se actualiza automáticamente.</div>
+        </Card>
       </div>
     </div>
   );

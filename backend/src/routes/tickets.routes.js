@@ -1,17 +1,35 @@
-// backend/src/routes/tickets.routes.js
 import { Router } from 'express';
 import {
-  createTicket, triageTicket, getClinicQueue,
-  callNext, finishTicket, noShowTicket
+  create,
+  triage,
+  nextInClinic,
+  finish,
+  noShow,
+  queueByClinic,
+  list,
+  recent,
+  getCountsByClinic
 } from '../controllers/tickets.controller.js';
 
 const router = Router();
 
-router.post('/', createTicket);                 // recepción crea ticket
-router.post('/:id/triage', triageTicket);       // triaje asigna clínica+prioridad
-router.get('/clinic/:id/queue', getClinicQueue);// pantalla/doctor: cola clínica
-router.post('/clinic/:id/next', callNext);      // doctor llama siguiente
-router.post('/:id/finish', finishTicket);       // doctor finaliza
-router.post('/:id/no-show', noShowTicket);      // doctor marca ausente
+// === CONSULTAS ===
+
+// listado general de tickets
+router.get('/', list);  
+
+// últimos tickets (para recepción)
+router.get('/recent', recent);
+
+// cola por clínica
+router.get('/clinic/:id/queue', queueByClinic);
+router.get('/clinic/:id/counts', getCountsByClinic);
+
+// === ACCIONES ===
+router.post('/', create);
+router.post('/:id/triage', triage);
+router.post('/:id/finish', finish);
+router.post('/:id/no-show', noShow);
+router.post('/clinic/:id/next', nextInClinic);
 
 export default router;

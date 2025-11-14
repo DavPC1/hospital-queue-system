@@ -1,30 +1,29 @@
+// frontend/src/api/client.js
 import axios from 'axios';
 
+const apiBase = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : 'http://localhost:4000/api';
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:4000/api'
+  baseURL: apiBase,
+  timeout: 10000,
 });
 
-api.interceptors.request.use(cfg => {
-  const t = localStorage.getItem('token');
-  if (t) cfg.headers.Authorization = `Bearer ${t}`;
-  return cfg;
-});
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+}, (err) => Promise.reject(err));
 
 api.interceptors.response.use(
   r => r,
-  err => {
-    const status = err?.response?.status;
-    const url = err?.config?.url || '';
-
-    // No redirigir si falló el propio login
-    const isLogin = url.includes('/auth/login');
-
-    if (status === 401 && !isLogin) {
+  (err) => {
+    if (err?.response?.status === 401) {
       localStorage.removeItem('token');
-      window.location.href = '/login';
-      return; // corta flujo
+      localStorage.removeItem('user');
     }
-    return Promise.reject(err); // deja que el componente maneje el error
+    return Promise.reject(err);
   }
 );
 

@@ -1,105 +1,175 @@
-import { useEffect, useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import api from '../api/client';
+import Card from '../components/Card';
+import { connectSocket } from '../services/socket';
+import { toast } from 'react-toastify';
 
 export default function Doctor() {
-  const [clinics, setClinics] = useState([]);
   const [clinicId, setClinicId] = useState('');
   const [current, setCurrent] = useState(null);
-  const [msg, setMsg] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [counts, setCounts] = useState({ pending: 0, in_service: 0 });
+  const socketRef = useRef(null);
 
+  // ---------------------------
+  // Conectar socket para actualizaciones
+  // ---------------------------
   useEffect(() => {
-    api.get('/clinics').then(({ data }) => {
-      setClinics(data);
-      if (data.length) setClinicId(String(data[0].id));
+    if (!socketRef.current) socketRef.current = connectSocket();
+    const socket = socketRef.current;
+
+    socket.on('queue:update', (payload) => {
+      if (payload?.clinic_id?.toString() === clinicId?.toString()) {
+        refreshCurrent();
+        loadCounts();
+      }
     });
-  }, []);
 
+    return () => socket.off('queue:update');
+  }, [clinicId]);
+
+  // ---------------------------
+  // Llamar al siguiente paciente
+  // ---------------------------
   async function callNext() {
-    setMsg(null);
-    const { data } = await api.post(`/tickets/clinic/${clinicId}/next`).catch(() => ({ data: null }));
-    if (!data || !data.id) {
+    if (!clinicId) return toast.error('Ingrese clinic id');
+    setLoading(true);
+    try {
+      const { data } = await api.post(`/tickets/clinic/${clinicId}/next`);
+      setCurrent(data);
+      toast.success(`Paciente #${data.id} llamado`);
+      loadCounts();
+    } catch (e) {
+      toast.error('No hay pacientes pendientes');
       setCurrent(null);
-      setMsg({ type: 'warn', text: 'No hay pacientes en cola' });
-      return;
+    } finally {
+      setLoading(false);
     }
-    setCurrent(data);
   }
 
-  async function finishTicket() {
+  // ---------------------------
+  // Finalizar consulta
+  // ---------------------------
+  async function finish() {
     if (!current) return;
-    await api.post(`/tickets/${current.id}/finish`);
-    setCurrent(null);
-    setMsg({ type: 'ok', text: 'Consulta finalizada' });
+    try {
+      await api.post(`/tickets/${current.id}/finish`);
+      toast.success('Consulta finalizada');
+      setCurrent(null);
+      loadCounts();
+    } catch (e) {
+      toast.error('Error finalizando consulta');
+    }
   }
 
+  // ---------------------------
+  // Marcar paciente como ausente
+  // ---------------------------
   async function noShow() {
     if (!current) return;
-    await api.post(`/tickets/${current.id}/no-show`);
-    setCurrent(null);
-    setMsg({ type: 'warn', text: 'Marcado como ausente' });
+    try {
+      await api.post(`/tickets/${current.id}/no-show`);
+      toast.success('Paciente marcado como ausente');
+      setCurrent(null);
+      loadCounts();
+    } catch (e) {
+      toast.error('Error marcando como ausente');
+    }
+  }
+
+  // ---------------------------
+  // Refrescar ticket actual (si hay alguno en atención)
+  // ---------------------------
+  async function refreshCurrent() {
+    if (!clinicId) return;
+    try {
+      const { data } = await api.get(`/tickets/clinic/${clinicId}/queue`);
+      const inService = data.find(t => t.status === 'in_service') || null;
+      setCurrent(inService);
+    } catch (e) {
+      console.error('Error refrescando ticket actual', e);
+    }
+  }
+
+  // ---------------------------
+  // Cargar indicadores
+  // ---------------------------
+  async function loadCounts() {
+    if (!clinicId) return;
+    try {
+      const { data } = await api.get(`/tickets/clinic/${clinicId}/counts`);
+      setCounts(data);
+    } catch (e) {
+      console.error('Error cargando indicadores', e);
+    }
   }
 
   return (
-    <div className="max-w-xl mx-auto bg-white p-6 rounded-xl shadow">
-      <h2 className="text-xl font-semibold mb-4">Panel Médico</h2>
-
-      <div className="flex items-center gap-3 mb-4">
-        <span>Clínica:</span>
-        <select
-          value={clinicId}
-          onChange={e => setClinicId(e.target.value)}
-          className="border rounded p-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        >
-          {clinics.map(c => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {!current ? (
-        <button
-          onClick={callNext}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded"
-        >
-          Llamar siguiente
-        </button>
-      ) : (
-        <div className="border rounded p-4">
-          <p className="text-lg">
-            Atendiendo Ticket <span className="font-semibold">#{current.id}</span>
-          </p>
-          <div className="mt-3 flex gap-3">
+    <div className="grid md:grid-cols-2 gap-6">
+      {/* Panel de llamadas */}
+      <div>
+        <Card title="Panel Médico">
+          <div className="flex items-center gap-2">
+            <input
+              placeholder="Clínica id"
+              value={clinicId}
+              onChange={e => setClinicId(e.target.value)}
+              className="border rounded px-3 py-2 w-40"
+            />
             <button
-              onClick={finishTicket}
-              className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded"
+              onClick={callNext}
+              className="bg-green-600 text-white px-3 py-2 rounded"
             >
-              Finalizar
-            </button>
-            <button
-              onClick={noShow}
-              className="bg-yellow-500 hover:bg-yellow-600 text-black px-3 py-2 rounded"
-            >
-              Ausente
+              {loading ? 'Buscando...' : 'Llamar siguiente'}
             </button>
           </div>
-        </div>
-      )}
+        </Card>
 
-      {msg && (
-        <p
-          className={`mt-4 text-sm ${
-            msg.type === 'ok'
-              ? 'text-green-700'
-              : msg.type === 'warn'
-              ? 'text-yellow-700'
-              : 'text-red-600'
-          }`}
-        >
-          {msg.text}
-        </p>
-      )}
+        <Card title="Paciente en atención" className="mt-4">
+          {current ? (
+            <div>
+              <div className="text-lg font-semibold">{current.patient_name}</div>
+              <div className="text-sm text-slate-600">
+                #{current.id} • {current.document || '—'}
+              </div>
+
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={finish}
+                  className="bg-sky-600 text-white px-3 py-1 rounded"
+                >
+                  Finalizar
+                </button>
+                <button
+                  onClick={noShow}
+                  className="bg-rose-600 text-white px-3 py-1 rounded"
+                >
+                  Ausente
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="text-slate-500">No hay paciente en atención</div>
+          )}
+        </Card>
+      </div>
+
+      {/* Indicadores rápidos */}
+      <div>
+        <Card title="Indicadores rápidos">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-3 bg-gray-50 rounded text-center">
+              <div className="text-sm text-slate-500">En espera</div>
+              <div className="text-xl font-bold">{counts.pending}</div>
+            </div>
+
+            <div className="p-3 bg-gray-50 rounded text-center">
+              <div className="text-sm text-slate-500">En atención</div>
+              <div className="text-xl font-bold">{counts.in_service}</div>
+            </div>
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }
