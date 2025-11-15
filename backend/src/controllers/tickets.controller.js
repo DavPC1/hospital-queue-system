@@ -320,3 +320,57 @@ export async function getCountsByClinic(req, res) {
     res.status(500).json({ error: 'Error al obtener conteo' });
   }
 }
+
+// NUEVA RUTA
+
+/* ======================================================
+   POST /api/tickets/:id/reassign  → Reasignar clínica
+====================================================== */
+export async function reassignClinic(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { reason } = req.body;
+    
+    // Convertir el ID a número
+    const new_clinic_id = parseInt(req.body.new_clinic_id, 10);
+
+    if (!new_clinic_id || !reason) {
+      return res.status(400).json({ error: 'Faltan campos: new_clinic_id y reason son obligatorios' });
+    }
+
+    const pool = await getConnection();
+
+    // 1. Obtener la clínica antigua para notificarla
+    const info = await pool.request()
+      .input('id', id)
+      .query('SELECT clinic_id FROM tickets WHERE id=@id');
+    
+    const old_clinic_id = info.recordset[0]?.clinic_id;
+
+    // 2. Actualizar a la nueva clínica (CONSULTA CORREGIDA)
+    await pool.request()
+      .input('id', id)
+      .input('new_clinic_id', new_clinic_id)
+      .query(`
+        UPDATE tickets
+        SET clinic_id = @new_clinic_id,
+            status = 'triaged',
+            priority = 5
+        WHERE id = @id
+      `);
+
+    // 3. Emitir eventos a ambas clínicas
+    if (old_clinic_id) {
+      emitQueueUpdate(old_clinic_id);
+    }
+    emitQueueUpdate(new_clinic_id);
+    emitMetricsUpdate();
+
+    res.json({ ok: true });
+
+  } catch (err) {
+    // Esto ahora mostrará el error en tu terminal
+    console.error('ERROR reassignClinic:', err); 
+    res.status(500).json({ error: 'Error al reasignar ticket' });
+  }
+}
