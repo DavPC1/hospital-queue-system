@@ -8,7 +8,8 @@ import {
   queueByClinic,
   list,
   recent,
-  getCountsByClinic
+  getCountsByClinic,
+  reassignClinic // NUEVA FUNCIÓN
 } from '../controllers/tickets.controller.js';
 
 const router = Router();
@@ -31,5 +32,6 @@ router.post('/:id/triage', triage);
 router.post('/:id/finish', finish);
 router.post('/:id/no-show', noShow);
 router.post('/clinic/:id/next', nextInClinic);
+router.post('/:id/reassign', reassignClinic); //NUEVA RUTA
 
 export default router;
